@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync"
 
 	"github.com/RGood/go-grpc-udp/internal/generated/packet"
+	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -14,8 +16,14 @@ import (
 )
 
 type UDPClientConn struct {
-	conn           net.Conn
-	readBufferSize uint32
+	conn            net.Conn
+	readBufferSize  uint32
+	responseStreams sync.Map
+}
+
+type ResponseStream struct {
+	done  chan bool
+	reply interface{}
 }
 
 func (conn *UDPClientConn) Invoke(ctx context.Context, method string, args interface{}, reply interface{}, opts ...grpc.CallOption) error {
@@ -39,7 +47,10 @@ func (conn *UDPClientConn) Invoke(ctx context.Context, method string, args inter
 		}
 	}
 
+	streamId := uuid.New().String()
+
 	p := &packet.Packet{
+		Id:       streamId,
 		Method:   method,
 		Metadata: md,
 		Payload:  data,
@@ -48,17 +59,14 @@ func (conn *UDPClientConn) Invoke(ctx context.Context, method string, args inter
 	packetBytes, err := protojson.Marshal(p)
 	_, err = conn.conn.Write(packetBytes)
 
-	responseData, err := func() ([]byte, error) {
-		buffer := make([]byte, conn.readBufferSize)
-		responseSize, err := conn.conn.Read(buffer)
-		if err != nil {
-			return nil, err
-		}
+	done := make(chan bool)
+	conn.responseStreams.Store(streamId, &ResponseStream{
+		done:  done,
+		reply: reply,
+	})
 
-		return buffer[:responseSize], nil
-	}()
+	<-done
 
-	err = protojson.Unmarshal(responseData, reply.(proto.Message))
 	return err
 }
 
@@ -72,8 +80,31 @@ func NewClient(addr string, readBufferSize uint32) (grpc.ClientConnInterface, er
 		return nil, err
 	}
 
-	return &UDPClientConn{
-		conn:           networkConn,
-		readBufferSize: readBufferSize,
-	}, nil
+	client := &UDPClientConn{
+		conn:            networkConn,
+		readBufferSize:  readBufferSize,
+		responseStreams: sync.Map{},
+	}
+
+	go func() {
+		buffer := make([]byte, readBufferSize)
+		for {
+			responseData, _ := func() ([]byte, error) {
+				responseSize, err := client.conn.Read(buffer)
+				if err != nil {
+					return nil, err
+				}
+
+				return buffer[:responseSize], nil
+			}()
+			var responsePacket packet.Packet
+			protojson.Unmarshal(responseData, &responsePacket)
+			responseStream, _ := client.responseStreams.Load(responsePacket.Id)
+			rs, _ := responseStream.(*ResponseStream)
+			protojson.Unmarshal(responsePacket.Payload, rs.reply.(proto.Message))
+			close(rs.done)
+		}
+	}()
+
+	return client, nil
 }

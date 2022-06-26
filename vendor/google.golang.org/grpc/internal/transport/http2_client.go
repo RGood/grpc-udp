@@ -365,7 +365,6 @@ func newHTTP2Client(connectCtx, ctx context.Context, addr resolver.Address, opts
 	go t.reader()
 
 	// Send connection preface to server.
-	fmt.Printf("%v\n", clientPreface)
 	n, err := t.conn.Write(clientPreface)
 	if err != nil {
 		err = connectionErrorf(true, err, "transport: failed to write client preface: %v", err)

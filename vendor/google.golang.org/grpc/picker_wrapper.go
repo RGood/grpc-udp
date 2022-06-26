@@ -20,7 +20,6 @@ package grpc
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"sync"
 
@@ -124,11 +123,7 @@ func (pw *pickerWrapper) pick(ctx context.Context, failfast bool, info balancer.
 		p := pw.picker
 		pw.mu.Unlock()
 
-		fmt.Printf("%v\n", info)
-
 		pickResult, err := p.Pick(info)
-
-		fmt.Printf("%v : %v\n", pickResult, err)
 
 		if err != nil {
 			if err == balancer.ErrNoSubConnAvailable {

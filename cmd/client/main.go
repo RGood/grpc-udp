@@ -24,7 +24,7 @@ func main() {
 
 			fmt.Printf("Sending %d\n", id)
 			res, _ := c.Send(context.Background(), &packet.Packet{
-				Method:  "foo",
+				Method:  "asdf",
 				Payload: []byte(fmt.Sprintf("%d", id)),
 			})
 			fmt.Printf("%s : %d\n", res.Payload, id)

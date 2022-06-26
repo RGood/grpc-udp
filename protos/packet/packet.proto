@@ -10,9 +10,10 @@ message MapEntry {
 }
 
 message Packet {
-    string method = 1;
-    repeated MapEntry metadata = 2;
-    bytes payload = 3;
+    string id = 1;
+    string method = 2;
+    repeated MapEntry metadata = 3;
+    bytes payload = 4;
 }
 
 service UDPServer {

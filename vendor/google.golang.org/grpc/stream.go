@@ -216,6 +216,7 @@ func newClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, meth
 			}
 		}
 	}
+
 	return newStream(ctx, func() {})
 }
 
@@ -311,11 +312,9 @@ func newClientStreamWithParams(ctx context.Context, desc *StreamDesc, cc *Client
 	// Pick the transport to use and create a new stream on the transport.
 	// Assign cs.attempt upon success.
 	op := func(a *csAttempt) error {
-		println("Getting transport...")
 		if err := a.getTransport(); err != nil {
 			return err
 		}
-		println("Getting stream...")
 		if err := a.newStream(); err != nil {
 			return err
 		}

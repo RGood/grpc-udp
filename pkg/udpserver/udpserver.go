@@ -98,7 +98,15 @@ func (udpServer *UDPServerConn) handleIncoming(caller net.Addr, data []byte) {
 		panic(err)
 	}
 
-	_, err = udpServer.conn.WriteTo(responseBytes, caller)
+	responsePacket := &packet.Packet{
+		Id:      payload.Id,
+		Method:  payload.Method,
+		Payload: responseBytes,
+	}
+
+	responsePacketBytes, err := protojson.Marshal(responsePacket)
+
+	_, err = udpServer.conn.WriteTo(responsePacketBytes, caller)
 	if err != nil {
 		fmt.Printf("Error sending bytes: %v\n", err)
 	}

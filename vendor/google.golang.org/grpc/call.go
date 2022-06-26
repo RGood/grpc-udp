@@ -20,7 +20,6 @@ package grpc
 
 import (
 	"context"
-	"fmt"
 )
 
 // Invoke sends the RPC request on the wire and returns after response is
@@ -64,12 +63,10 @@ func Invoke(ctx context.Context, method string, args, reply interface{}, cc *Cli
 var unaryStreamDesc = &StreamDesc{ServerStreams: false, ClientStreams: false}
 
 func invoke(ctx context.Context, method string, req, reply interface{}, cc *ClientConn, opts ...CallOption) error {
-	println("Invoking.")
 	cs, err := newClientStream(ctx, unaryStreamDesc, cc, method, opts...)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%v\n", req)
 	if err := cs.SendMsg(req); err != nil {
 		return err
 	}
