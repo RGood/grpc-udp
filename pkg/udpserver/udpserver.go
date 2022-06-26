@@ -2,6 +2,7 @@ package udpserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"reflect"
@@ -190,6 +191,8 @@ func (udpServer *UDPServerConn) handleIncoming(caller net.Addr, data []byte) {
 		udpServer.handleCloseStream(caller, &payload)
 	case "streamData":
 		udpServer.handleStreamMessage(caller, &payload)
+	default:
+		udpServer.sendErrorResponse(caller, &payload, errors.New("payload type not recognized"))
 	}
 }
 

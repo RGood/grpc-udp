@@ -111,9 +111,7 @@ func (cs *UDPClientStream) SendMsg(m interface{}) error {
 	}
 
 	p := &packet.Packet{
-		Id:       cs.streamID,
-		Method:   cs.method,
-		Metadata: md,
+		Id: cs.streamID,
 		Payload: &packet.Packet_StreamData{
 			StreamData: data,
 		},

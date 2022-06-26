@@ -58,9 +58,7 @@ func (ss *UDPServerStream) SendMsg(m interface{}) error {
 	}
 
 	p := &packet.Packet{
-		Id:       ss.streamID,
-		Method:   ss.method,
-		Metadata: ss.md,
+		Id: ss.streamID,
 		Payload: &packet.Packet_StreamData{
 			StreamData: streamData,
 		},
