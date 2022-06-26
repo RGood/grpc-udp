@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package packet;
+
+option go_package="github.com/RGood/go-grpc-udp/internal/generated/packet";
+
+message MapEntry {
+    string key = 1;
+    repeated string values = 2;
+}
+
+message Packet {
+    string method = 1;
+    repeated MapEntry metadata = 2;
+    bytes payload = 3;
+}
+
+service UDPServer {
+    rpc Send(Packet) returns (Packet);
+}
