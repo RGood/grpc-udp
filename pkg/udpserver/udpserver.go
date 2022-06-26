@@ -197,13 +197,15 @@ func (udpServer *UDPServerConn) handleIncoming(caller net.Addr, data []byte) {
 }
 
 func (udpServer *UDPServerConn) Listen() {
+	buffer := make([]byte, udpServer.bufferSize)
 	for {
-		buffer := make([]byte, udpServer.bufferSize)
 		bytesRead, caller, err := udpServer.conn.ReadFrom(buffer)
 		if err != nil {
 			fmt.Printf("Error (%s) => %s", caller.String(), err.Error())
 		} else {
-			go udpServer.handleIncoming(caller, buffer[:bytesRead])
+			res := make([]byte, bytesRead)
+			copy(res, buffer[:bytesRead])
+			go udpServer.handleIncoming(caller, res)
 		}
 	}
 }

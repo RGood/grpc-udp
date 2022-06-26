@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/RGood/go-grpc-udp/internal/generated/example"
 	"github.com/RGood/go-grpc-udp/pkg/udpclient"
@@ -18,36 +19,49 @@ func main() {
 
 	c := example.NewExampleClient(conn)
 
+	totalSyncRequestTime := time.Second * 0
+	pings := 1000
+
 	wg := sync.WaitGroup{}
-	for i := 0; i < 10; i++ {
+	for i := 0; i < pings; i++ {
 		wg.Add(1)
 		go func(id int) {
-
 			fmt.Printf("Sending %d\n", id)
+			start := time.Now()
 			res, _ := c.Ping(context.Background(), &example.PingMessage{
 				Message: strconv.Itoa(id),
 			})
+			end := time.Now()
+			duration := end.Sub(start)
+			fmt.Printf("Duration: %dμs\n", duration.Microseconds())
+			totalSyncRequestTime += duration
 			fmt.Printf("%d => %s\n", id, res.Message)
 			wg.Done()
 		}(i)
 	}
-
-	wg.Wait()
 
 	pingStream, err := c.PingStream(context.TODO())
 	if err != nil {
 		panic(err)
 	}
 
-	println("Stream initialized")
+	start := time.Now()
+	for i := 0; i < pings; i++ {
+		pingStream.Send(&example.PingMessage{
+			Message: fmt.Sprintf("Foo(%d)", i),
+		})
+	}
 
-	pingStream.Send(&example.PingMessage{
-		Message: "Foo",
-	})
-
-	pongMessage, _ := pingStream.Recv()
-	fmt.Printf("%v\n", pongMessage)
+	for i := 0; i < pings; i++ {
+		pongMessage, _ := pingStream.Recv()
+		fmt.Printf("%d: %v\n", i, pongMessage)
+	}
+	end := time.Now()
+	totalStreamTime := end.Sub(start)
 
 	pingStream.CloseSend()
 
+	wg.Wait()
+
+	fmt.Printf("Avg Sync Request Time: %d\nAvg Stream Request Time: %d\n", totalSyncRequestTime.Microseconds()/int64(pings), totalStreamTime.Microseconds()/int64(pings))
 }
