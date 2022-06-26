@@ -27,7 +27,7 @@ func main() {
 				Method:  "asdf",
 				Payload: []byte(fmt.Sprintf("%d", id)),
 			})
-			fmt.Printf("%s : %d\n", res.Payload, id)
+			fmt.Printf("%d => %s\n", id, res.Payload)
 			wg.Done()
 		}(i)
 	}
