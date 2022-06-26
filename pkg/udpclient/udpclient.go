@@ -18,13 +18,11 @@ import (
 
 type UDPClientConn struct {
 	conn            net.Conn
-	readBufferSize  uint32
 	responseStreams *sync.Map
 }
 
 type ResponseStream struct {
-	done  chan bool
-	reply interface{}
+	res chan *packet.Packet
 }
 
 func (conn *UDPClientConn) Invoke(ctx context.Context, method string, args interface{}, reply interface{}, opts ...grpc.CallOption) error {
@@ -55,25 +53,28 @@ func (conn *UDPClientConn) Invoke(ctx context.Context, method string, args inter
 		Id:       streamIDString,
 		Method:   method,
 		Metadata: md,
-		Payload:  data,
+		Payload: &packet.Packet_Data{
+			Data: data,
+		},
 	}
 
-	done := make(chan bool)
+	resChan := make(chan *packet.Packet)
+	defer close(resChan)
 	conn.responseStreams.Store(streamIDString, &ResponseStream{
-		done:  done,
-		reply: reply,
+		res: resChan,
 	})
 
 	packetBytes, err := protojson.Marshal(p)
 	_, err = conn.conn.Write(packetBytes)
 
-	<-done
+	responseData := <-resChan
+	protojson.Unmarshal(responseData.GetData(), reply.(proto.Message))
 
 	return err
 }
 
 func (conn *UDPClientConn) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
-	return nil, nil
+	return NewUDPClientStream(ctx, method, conn)
 }
 
 func NewClient(addr string, readBufferSize uint32) (grpc.ClientConnInterface, error) {
@@ -84,7 +85,6 @@ func NewClient(addr string, readBufferSize uint32) (grpc.ClientConnInterface, er
 
 	client := &UDPClientConn{
 		conn:            networkConn,
-		readBufferSize:  readBufferSize,
 		responseStreams: &sync.Map{},
 	}
 
@@ -111,8 +111,7 @@ func NewClient(addr string, readBufferSize uint32) (grpc.ClientConnInterface, er
 					return
 				}
 				rs, _ := responseStream.(*ResponseStream)
-				protojson.Unmarshal(responsePacket.Payload, rs.reply.(proto.Message))
-				close(rs.done)
+				rs.res <- &responsePacket
 			}(client, responseData)
 		}
 	}()

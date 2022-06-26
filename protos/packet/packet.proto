@@ -12,8 +12,15 @@ message MapEntry {
 message Packet {
     string id = 1;
     string method = 2;
-    repeated MapEntry metadata = 3;
-    bytes payload = 4;
+    repeated MapEntry metadata = 4;
+    oneof payload {
+        bytes data = 5;
+        bool open_stream = 6;
+        bytes stream_data = 7;
+        bool close_stream = 8;
+
+        string error = 9;
+    }
 }
 
 service UDPServer {

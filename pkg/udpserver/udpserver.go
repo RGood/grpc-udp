@@ -15,9 +15,10 @@ import (
 )
 
 type UDPServerConn struct {
-	conn       net.PacketConn
-	bufferSize uint32
-	services   map[string]*Service
+	conn          net.PacketConn
+	bufferSize    uint32
+	services      map[string]*Service
+	activeStreams map[string]*UDPServerStream
 }
 
 type Service struct {
@@ -28,9 +29,10 @@ type Service struct {
 
 func NewServer(conn net.PacketConn, bufferSize uint32) *UDPServerConn {
 	return &UDPServerConn{
-		conn:       conn,
-		bufferSize: bufferSize,
-		services:   map[string]*Service{},
+		conn:          conn,
+		bufferSize:    bufferSize,
+		services:      map[string]*Service{},
+		activeStreams: map[string]*UDPServerStream{},
 	}
 }
 
@@ -60,18 +62,65 @@ func (udpServer *UDPServerConn) RegisterService(desc *grpc.ServiceDesc, impl int
 	udpServer.services[desc.ServiceName] = newService
 }
 
-func (udpServer *UDPServerConn) handleIncoming(caller net.Addr, data []byte) {
-	var payload packet.Packet
-	protojson.Unmarshal(data, &payload)
+func (udpServer *UDPServerConn) sendErrorResponse(caller net.Addr, payload *packet.Packet, err error) {
+	fmt.Printf("Sending error response: %s\n", err.Error())
+	errorResponse := &packet.Packet{
+		Id:       payload.Id,
+		Method:   payload.Method,
+		Metadata: payload.Metadata,
+		Payload: &packet.Packet_Error{
+			Error: err.Error(),
+		},
+	}
+
+	responsePacketBytes, err := protojson.Marshal(errorResponse)
+
+	_, err = udpServer.conn.WriteTo(responsePacketBytes, caller)
+	if err != nil {
+		fmt.Printf("Error sending bytes: %v\n", err)
+	}
+}
+
+func (udpServer *UDPServerConn) handleOpenStream(caller net.Addr, payload *packet.Packet) {
+	md := map[string][]string{}
+	for _, entry := range payload.Metadata {
+		md[entry.Key] = entry.Values
+	}
+
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+
+	newStream := NewUDPServerStream(udpServer.conn, caller, payload.Id, payload.Method)
+
+	headerMD, _ := metadata.FromIncomingContext(ctx)
+	newStream.SetHeader(headerMD)
+
+	udpServer.activeStreams[payload.Id] = newStream
 
 	routingSegments := strings.Split(payload.Method, "/")
 	serviceName := routingSegments[1]
-	methodName := routingSegments[2]
-
+	streamName := routingSegments[2]
 	service, _ := udpServer.services[serviceName]
-	method := service.methods[methodName]
+	streamDesc := service.streams[streamName]
 
-	context.Background()
+	go streamDesc.Handler(service.impl, newStream)
+
+	responsePacketBytes, err := protojson.Marshal(payload)
+
+	_, err = udpServer.conn.WriteTo(responsePacketBytes, caller)
+	if err != nil {
+		fmt.Printf("Error sending bytes: %v\n", err)
+	}
+}
+
+func (udpServer *UDPServerConn) handleCloseStream(caller net.Addr, payload *packet.Packet) {
+	closingStream, ok := udpServer.activeStreams[payload.Id]
+	if ok {
+		delete(udpServer.activeStreams, payload.Id)
+		close(closingStream.dataChannel)
+	}
+}
+
+func (udpServer *UDPServerConn) handleMessage(caller net.Addr, payload *packet.Packet) {
 
 	md := map[string][]string{}
 	for _, entry := range payload.Metadata {
@@ -80,27 +129,33 @@ func (udpServer *UDPServerConn) handleIncoming(caller net.Addr, data []byte) {
 
 	ctx := metadata.NewIncomingContext(context.Background(), md)
 
+	routingSegments := strings.Split(payload.Method, "/")
+	serviceName := routingSegments[1]
+	methodName := routingSegments[2]
+	service, _ := udpServer.services[serviceName]
+	method := service.methods[methodName]
 	res, err := method.Handler(service.impl, ctx, func(in interface{}) error {
-		return protojson.Unmarshal(payload.Payload, in.(proto.Message))
+		return protojson.Unmarshal(payload.GetData(), in.(proto.Message))
 	}, func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		return handler(ctx, req)
 	})
-
 	if err != nil {
-		panic(err)
+		udpServer.sendErrorResponse(caller, payload, err)
+		return
 	}
 
 	responseBytes, err := protojson.Marshal(res.(proto.Message))
 	if err != nil {
-		panic(err)
+		udpServer.sendErrorResponse(caller, payload, err)
+		return
 	}
 
-	fmt.Printf("%s\n", payload.Id)
-
 	responsePacket := &packet.Packet{
-		Id:      payload.Id,
-		Method:  payload.Method,
-		Payload: responseBytes,
+		Id:     payload.Id,
+		Method: payload.Method,
+		Payload: &packet.Packet_Data{
+			Data: responseBytes,
+		},
 	}
 
 	responsePacketBytes, err := protojson.Marshal(responsePacket)
@@ -109,7 +164,33 @@ func (udpServer *UDPServerConn) handleIncoming(caller net.Addr, data []byte) {
 	if err != nil {
 		fmt.Printf("Error sending bytes: %v\n", err)
 	}
+}
 
+func (udpServer *UDPServerConn) handleStreamMessage(caller net.Addr, payload *packet.Packet) {
+	serverStream, ok := udpServer.activeStreams[payload.GetId()]
+	if ok {
+		go func() { serverStream.dataChannel <- payload.GetStreamData() }()
+	}
+}
+
+func (udpServer *UDPServerConn) handleIncoming(caller net.Addr, data []byte) {
+	var payload packet.Packet
+	protojson.Unmarshal(data, &payload)
+
+	//protoreflect.Message.WhichOneof()
+	descriptor := payload.ProtoReflect().WhichOneof(payload.ProtoReflect().Descriptor().Oneofs().ByName("payload"))
+
+	packetType := descriptor.JSONName()
+	switch packetType {
+	case "data":
+		udpServer.handleMessage(caller, &payload)
+	case "openStream":
+		udpServer.handleOpenStream(caller, &payload)
+	case "closeStream":
+		udpServer.handleCloseStream(caller, &payload)
+	case "streamData":
+		udpServer.handleStreamMessage(caller, &payload)
+	}
 }
 
 func (udpServer *UDPServerConn) Listen() {

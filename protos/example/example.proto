@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package example;
+
+option go_package="github.com/RGood/go-grpc-udp/internal/generated/example";
+
+
+message PingMessage {
+    string message = 1;
+}
+
+message PongMessage {
+    string message = 1;
+}
+
+
+service Example {
+    rpc Ping(PingMessage) returns (PongMessage);
+    rpc PingStream(stream PingMessage) returns (stream PongMessage);
+}

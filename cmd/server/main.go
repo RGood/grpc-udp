@@ -6,19 +6,39 @@ import (
 	"log"
 	"net"
 
-	"github.com/RGood/go-grpc-udp/internal/generated/packet"
+	"github.com/RGood/go-grpc-udp/internal/generated/example"
 	"github.com/RGood/go-grpc-udp/pkg/udpserver"
 )
 
-type mockUDPServer struct {
-	packet.UnimplementedUDPServerServer
+type mockExample struct {
+	example.UnimplementedExampleServer
 }
 
-func (mockUDPServer *mockUDPServer) Send(ctx context.Context, p *packet.Packet) (*packet.Packet, error) {
-	text := string(p.Payload)
-	p.Payload = []byte("Pong: " + text)
+func (mockExample *mockExample) Ping(ctx context.Context, p *example.PingMessage) (*example.PongMessage, error) {
+	text := p.Message
 	fmt.Printf("Got Packet: %v\n", p)
-	return p, nil
+	return &example.PongMessage{
+		Message: "Pong: " + text,
+	}, nil
+}
+
+func (mockExample *mockExample) PingStream(stream example.Example_PingStreamServer) error {
+	fmt.Printf("Stream opening.\n")
+	for {
+		ping, err := stream.Recv()
+		if err != nil {
+			fmt.Printf("Stream closing.\n")
+			return err
+		}
+
+		fmt.Printf("Got streamed packet: %v\n", ping)
+
+		pong := &example.PongMessage{
+			Message: "Ponging " + ping.Message,
+		}
+
+		stream.Send(pong)
+	}
 }
 
 func main() {
@@ -27,6 +47,6 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 	srv := udpserver.NewServer(lis, 100000)
-	srv.RegisterService(&packet.UDPServer_ServiceDesc, &mockUDPServer{})
+	srv.RegisterService(&example.Example_ServiceDesc, &mockExample{})
 	srv.Listen()
 }
