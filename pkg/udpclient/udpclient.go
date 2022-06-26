@@ -3,6 +3,7 @@ package udpclient
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 
@@ -18,7 +19,7 @@ import (
 type UDPClientConn struct {
 	conn            net.Conn
 	readBufferSize  uint32
-	responseStreams sync.Map
+	responseStreams *sync.Map
 }
 
 type ResponseStream struct {
@@ -47,23 +48,24 @@ func (conn *UDPClientConn) Invoke(ctx context.Context, method string, args inter
 		}
 	}
 
-	streamId := uuid.New().String()
+	streamID, _ := uuid.NewRandom()
+	streamIDString := streamID.String()
 
 	p := &packet.Packet{
-		Id:       streamId,
+		Id:       streamIDString,
 		Method:   method,
 		Metadata: md,
 		Payload:  data,
 	}
 
-	packetBytes, err := protojson.Marshal(p)
-	_, err = conn.conn.Write(packetBytes)
-
 	done := make(chan bool)
-	conn.responseStreams.Store(streamId, &ResponseStream{
+	conn.responseStreams.Store(streamIDString, &ResponseStream{
 		done:  done,
 		reply: reply,
 	})
+
+	packetBytes, err := protojson.Marshal(p)
+	_, err = conn.conn.Write(packetBytes)
 
 	<-done
 
@@ -83,7 +85,7 @@ func NewClient(addr string, readBufferSize uint32) (grpc.ClientConnInterface, er
 	client := &UDPClientConn{
 		conn:            networkConn,
 		readBufferSize:  readBufferSize,
-		responseStreams: sync.Map{},
+		responseStreams: &sync.Map{},
 	}
 
 	go func() {
@@ -95,14 +97,23 @@ func NewClient(addr string, readBufferSize uint32) (grpc.ClientConnInterface, er
 					return nil, err
 				}
 
-				return buffer[:responseSize], nil
+				res := make([]byte, responseSize)
+				copy(res, buffer[:responseSize])
+				return res, nil
 			}()
-			var responsePacket packet.Packet
-			protojson.Unmarshal(responseData, &responsePacket)
-			responseStream, _ := client.responseStreams.Load(responsePacket.Id)
-			rs, _ := responseStream.(*ResponseStream)
-			protojson.Unmarshal(responsePacket.Payload, rs.reply.(proto.Message))
-			close(rs.done)
+
+			go func(c *UDPClientConn, data []byte) {
+				var responsePacket packet.Packet
+				protojson.Unmarshal(data, &responsePacket)
+				responseStream, ok := client.responseStreams.Load(responsePacket.GetId())
+				if !ok {
+					fmt.Printf("couldn't find response stream for (%s)", responsePacket.Id)
+					return
+				}
+				rs, _ := responseStream.(*ResponseStream)
+				protojson.Unmarshal(responsePacket.Payload, rs.reply.(proto.Message))
+				close(rs.done)
+			}(client, responseData)
 		}
 	}()
 

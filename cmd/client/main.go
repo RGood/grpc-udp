@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/RGood/go-grpc-udp/internal/generated/packet"
@@ -25,7 +26,7 @@ func main() {
 			fmt.Printf("Sending %d\n", id)
 			res, _ := c.Send(context.Background(), &packet.Packet{
 				Method:  "asdf",
-				Payload: []byte(fmt.Sprintf("%d", id)),
+				Payload: []byte(strings.Repeat(fmt.Sprintf("%d", id), id+1)),
 			})
 			fmt.Printf("%d => %s\n", id, res.Payload)
 			wg.Done()

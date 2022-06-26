@@ -80,9 +80,6 @@ func (udpServer *UDPServerConn) handleIncoming(caller net.Addr, data []byte) {
 
 	ctx := metadata.NewIncomingContext(context.Background(), md)
 
-	println(payload.GetMethod())
-	fmt.Printf("%v\n", udpServer.services)
-
 	res, err := method.Handler(service.impl, ctx, func(in interface{}) error {
 		return protojson.Unmarshal(payload.Payload, in.(proto.Message))
 	}, func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
@@ -97,6 +94,8 @@ func (udpServer *UDPServerConn) handleIncoming(caller net.Addr, data []byte) {
 	if err != nil {
 		panic(err)
 	}
+
+	fmt.Printf("%s\n", payload.Id)
 
 	responsePacket := &packet.Packet{
 		Id:      payload.Id,
