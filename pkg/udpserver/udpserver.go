@@ -7,6 +7,7 @@ import (
 	"net"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/RGood/go-grpc-udp/internal/generated/packet"
 	"google.golang.org/grpc"
@@ -19,7 +20,7 @@ type UDPServerConn struct {
 	conn          net.PacketConn
 	bufferSize    uint32
 	services      map[string]*Service
-	activeStreams map[string]*UDPServerStream
+	activeStreams *sync.Map
 }
 
 type Service struct {
@@ -33,7 +34,7 @@ func NewServer(conn net.PacketConn, bufferSize uint32) *UDPServerConn {
 		conn:          conn,
 		bufferSize:    bufferSize,
 		services:      map[string]*Service{},
-		activeStreams: map[string]*UDPServerStream{},
+		activeStreams: &sync.Map{},
 	}
 }
 
@@ -83,6 +84,8 @@ func (udpServer *UDPServerConn) sendErrorResponse(caller net.Addr, payload *pack
 }
 
 func (udpServer *UDPServerConn) handleOpenStream(caller net.Addr, payload *packet.Packet) {
+	newStream := NewUDPServerStream(udpServer.conn, caller, payload.Id, payload.Method)
+	udpServer.activeStreams.Store(payload.Id, newStream)
 	md := map[string][]string{}
 	for _, entry := range payload.Metadata {
 		md[entry.Key] = entry.Values
@@ -90,12 +93,8 @@ func (udpServer *UDPServerConn) handleOpenStream(caller net.Addr, payload *packe
 
 	ctx := metadata.NewIncomingContext(context.Background(), md)
 
-	newStream := NewUDPServerStream(udpServer.conn, caller, payload.Id, payload.Method)
-
 	headerMD, _ := metadata.FromIncomingContext(ctx)
 	newStream.SetHeader(headerMD)
-
-	udpServer.activeStreams[payload.Id] = newStream
 
 	routingSegments := strings.Split(payload.Method, "/")
 	serviceName := routingSegments[1]
@@ -114,10 +113,11 @@ func (udpServer *UDPServerConn) handleOpenStream(caller net.Addr, payload *packe
 }
 
 func (udpServer *UDPServerConn) handleCloseStream(caller net.Addr, payload *packet.Packet) {
-	closingStream, ok := udpServer.activeStreams[payload.Id]
+	closingStream, ok := udpServer.activeStreams.Load(payload.Id)
 	if ok {
-		delete(udpServer.activeStreams, payload.Id)
-		close(closingStream.dataChannel)
+		udpServer.activeStreams.Delete(payload.Id)
+		closingStream.(*UDPServerStream).pendingInput.Wait()
+		close(closingStream.(*UDPServerStream).done)
 	}
 }
 
@@ -168,9 +168,12 @@ func (udpServer *UDPServerConn) handleMessage(caller net.Addr, payload *packet.P
 }
 
 func (udpServer *UDPServerConn) handleStreamMessage(caller net.Addr, payload *packet.Packet) {
-	serverStream, ok := udpServer.activeStreams[payload.GetId()]
+	serverStream, ok := udpServer.activeStreams.Load(payload.Id)
 	if ok {
-		go func() { serverStream.dataChannel <- payload.GetStreamData() }()
+		go func(stream *UDPServerStream) {
+			stream.pendingInput.Add(1)
+			stream.dataChannel <- payload.GetStreamData()
+		}(serverStream.(*UDPServerStream))
 	}
 }
 
@@ -182,6 +185,8 @@ func (udpServer *UDPServerConn) handleIncoming(caller net.Addr, data []byte) {
 	descriptor := payload.ProtoReflect().WhichOneof(payload.ProtoReflect().Descriptor().Oneofs().ByName("payload"))
 
 	packetType := descriptor.JSONName()
+	fmt.Printf("%v\n", payload)
+	fmt.Printf("%s\n", packetType)
 	switch packetType {
 	case "data":
 		udpServer.handleMessage(caller, &payload)

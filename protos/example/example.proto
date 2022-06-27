@@ -17,4 +17,6 @@ message PongMessage {
 service Example {
     rpc Ping(PingMessage) returns (PongMessage);
     rpc PingStream(stream PingMessage) returns (stream PongMessage);
+    rpc SendStream(stream PingMessage) returns (PongMessage);
+    rpc RecvStream(PingMessage) returns (stream PongMessage);
 }

@@ -20,6 +20,8 @@ const _ = grpc.SupportPackageIsVersion7
 type ExampleClient interface {
 	Ping(ctx context.Context, in *PingMessage, opts ...grpc.CallOption) (*PongMessage, error)
 	PingStream(ctx context.Context, opts ...grpc.CallOption) (Example_PingStreamClient, error)
+	SendStream(ctx context.Context, opts ...grpc.CallOption) (Example_SendStreamClient, error)
+	RecvStream(ctx context.Context, in *PingMessage, opts ...grpc.CallOption) (Example_RecvStreamClient, error)
 }
 
 type exampleClient struct {
@@ -70,12 +72,80 @@ func (x *examplePingStreamClient) Recv() (*PongMessage, error) {
 	return m, nil
 }
 
+func (c *exampleClient) SendStream(ctx context.Context, opts ...grpc.CallOption) (Example_SendStreamClient, error) {
+	stream, err := c.cc.NewStream(ctx, &Example_ServiceDesc.Streams[1], "/example.Example/SendStream", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &exampleSendStreamClient{stream}
+	return x, nil
+}
+
+type Example_SendStreamClient interface {
+	Send(*PingMessage) error
+	CloseAndRecv() (*PongMessage, error)
+	grpc.ClientStream
+}
+
+type exampleSendStreamClient struct {
+	grpc.ClientStream
+}
+
+func (x *exampleSendStreamClient) Send(m *PingMessage) error {
+	return x.ClientStream.SendMsg(m)
+}
+
+func (x *exampleSendStreamClient) CloseAndRecv() (*PongMessage, error) {
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	m := new(PongMessage)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (c *exampleClient) RecvStream(ctx context.Context, in *PingMessage, opts ...grpc.CallOption) (Example_RecvStreamClient, error) {
+	stream, err := c.cc.NewStream(ctx, &Example_ServiceDesc.Streams[2], "/example.Example/RecvStream", opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &exampleRecvStreamClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type Example_RecvStreamClient interface {
+	Recv() (*PongMessage, error)
+	grpc.ClientStream
+}
+
+type exampleRecvStreamClient struct {
+	grpc.ClientStream
+}
+
+func (x *exampleRecvStreamClient) Recv() (*PongMessage, error) {
+	m := new(PongMessage)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
 // ExampleServer is the server API for Example service.
 // All implementations must embed UnimplementedExampleServer
 // for forward compatibility
 type ExampleServer interface {
 	Ping(context.Context, *PingMessage) (*PongMessage, error)
 	PingStream(Example_PingStreamServer) error
+	SendStream(Example_SendStreamServer) error
+	RecvStream(*PingMessage, Example_RecvStreamServer) error
 	mustEmbedUnimplementedExampleServer()
 }
 
@@ -88,6 +158,12 @@ func (UnimplementedExampleServer) Ping(context.Context, *PingMessage) (*PongMess
 }
 func (UnimplementedExampleServer) PingStream(Example_PingStreamServer) error {
 	return status.Errorf(codes.Unimplemented, "method PingStream not implemented")
+}
+func (UnimplementedExampleServer) SendStream(Example_SendStreamServer) error {
+	return status.Errorf(codes.Unimplemented, "method SendStream not implemented")
+}
+func (UnimplementedExampleServer) RecvStream(*PingMessage, Example_RecvStreamServer) error {
+	return status.Errorf(codes.Unimplemented, "method RecvStream not implemented")
 }
 func (UnimplementedExampleServer) mustEmbedUnimplementedExampleServer() {}
 
@@ -146,6 +222,53 @@ func (x *examplePingStreamServer) Recv() (*PingMessage, error) {
 	return m, nil
 }
 
+func _Example_SendStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(ExampleServer).SendStream(&exampleSendStreamServer{stream})
+}
+
+type Example_SendStreamServer interface {
+	SendAndClose(*PongMessage) error
+	Recv() (*PingMessage, error)
+	grpc.ServerStream
+}
+
+type exampleSendStreamServer struct {
+	grpc.ServerStream
+}
+
+func (x *exampleSendStreamServer) SendAndClose(m *PongMessage) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *exampleSendStreamServer) Recv() (*PingMessage, error) {
+	m := new(PingMessage)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func _Example_RecvStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(PingMessage)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(ExampleServer).RecvStream(m, &exampleRecvStreamServer{stream})
+}
+
+type Example_RecvStreamServer interface {
+	Send(*PongMessage) error
+	grpc.ServerStream
+}
+
+type exampleRecvStreamServer struct {
+	grpc.ServerStream
+}
+
+func (x *exampleRecvStreamServer) Send(m *PongMessage) error {
+	return x.ServerStream.SendMsg(m)
+}
+
 // Example_ServiceDesc is the grpc.ServiceDesc for Example service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -164,6 +287,16 @@ var Example_ServiceDesc = grpc.ServiceDesc{
 			Handler:       _Example_PingStream_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
+		},
+		{
+			StreamName:    "SendStream",
+			Handler:       _Example_SendStream_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "RecvStream",
+			Handler:       _Example_RecvStream_Handler,
+			ServerStreams: true,
 		},
 	},
 	Metadata: "example/example.proto",

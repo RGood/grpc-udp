@@ -3,6 +3,7 @@ package udpclient
 import (
 	"context"
 	"errors"
+	"sync"
 
 	"github.com/RGood/go-grpc-udp/internal/generated/packet"
 	"github.com/RGood/go-grpc-udp/pkg/utils"
@@ -20,6 +21,7 @@ type UDPClientStream struct {
 	streamID      string
 	method        string
 	rs            *ResponseStream
+	pendingSend   sync.WaitGroup
 }
 
 var _ grpc.ClientStream = (*UDPClientStream)(nil)
@@ -69,7 +71,7 @@ func (cs *UDPClientStream) Trailer() metadata.MD {
 }
 
 func (cs *UDPClientStream) CloseSend() error {
-	cs.client.responseStreams.Delete(cs.streamID)
+	cs.pendingSend.Wait()
 	p := &packet.Packet{
 		Id:       cs.streamID,
 		Method:   cs.method,
@@ -90,6 +92,8 @@ func (cs *UDPClientStream) Context() context.Context {
 }
 
 func (cs *UDPClientStream) SendMsg(m interface{}) error {
+	cs.pendingSend.Add(1)
+	defer cs.pendingSend.Done()
 	a, ok := m.(protoreflect.ProtoMessage)
 	if !ok {
 		return errors.New("args do not implement protoreflect")

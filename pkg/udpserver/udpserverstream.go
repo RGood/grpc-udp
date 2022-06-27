@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync"
 
 	"github.com/RGood/go-grpc-udp/internal/generated/packet"
 	"github.com/RGood/go-grpc-udp/pkg/utils"
@@ -14,23 +15,27 @@ import (
 )
 
 type UDPServerStream struct {
-	conn        net.PacketConn
-	caller      net.Addr
-	streamID    string
-	method      string
-	md          []*packet.MapEntry
-	dataChannel chan []byte
+	conn         net.PacketConn
+	caller       net.Addr
+	streamID     string
+	method       string
+	md           []*packet.MapEntry
+	dataChannel  chan []byte
+	done         chan bool
+	pendingInput sync.WaitGroup
 }
 
 var _ grpc.ServerStream = (*UDPServerStream)(nil)
 
 func NewUDPServerStream(conn net.PacketConn, caller net.Addr, id, method string) *UDPServerStream {
 	return &UDPServerStream{
-		conn:        conn,
-		caller:      caller,
-		streamID:    id,
-		method:      method,
-		dataChannel: make(chan []byte),
+		conn:         conn,
+		caller:       caller,
+		streamID:     id,
+		method:       method,
+		dataChannel:  make(chan []byte),
+		done:         make(chan bool),
+		pendingInput: sync.WaitGroup{},
 	}
 }
 
@@ -75,9 +80,12 @@ func (ss *UDPServerStream) SendMsg(m interface{}) error {
 }
 
 func (ss *UDPServerStream) RecvMsg(m interface{}) error {
-	b, ok := <-ss.dataChannel
-	if !ok {
-		return errors.New("error reading from stream")
+	select {
+	case b := <-ss.dataChannel:
+		defer ss.pendingInput.Done()
+		return protojson.Unmarshal(b, m.(proto.Message))
+	case <-ss.done:
+		return errors.New("stream closed")
 	}
-	return protojson.Unmarshal(b, m.(proto.Message))
+
 }
